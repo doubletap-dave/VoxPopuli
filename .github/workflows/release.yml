@@ -1,14 +1,6 @@
 # Bump the addon version, tag that commit, and publish a GitHub Release.
-# CurseForge packages the tag when this repository's webhook is set.
-#
-# One-time CurseForge setup (do this in the browser, not in the repo):
-#   1. Create an API token at https://www.curseforge.com/account/api-tokens
-#   2. On the GitHub repo: Settings > Webhooks > Add webhook
-#   3. Payload URL:
-#        https://www.curseforge.com/api/projects/{projectID}/package?token={token}
-#      projectID is on the project's Overview page, under About This Project.
-#   4. Content type: application/json. Leave the other settings at their defaults.
-# A tag with no "alpha" or "beta" in the name is a Release. "1.2.0-beta" is a beta.
+# Pushing the tag starts .github/workflows/curseforge.yml, which uploads the
+# zip to CurseForge. A tag with no "alpha" or "beta" in the name is a release.
 name: Release
 
 on:

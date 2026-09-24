@@ -1,0 +1,71 @@
+# Upload a tag to CurseForge project 1710130.
+# The API token is the CF_API_TOKEN repository secret, never a file in git.
+name: CurseForge
+
+on:
+  push:
+    tags:
+      - "*"
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Package and upload
+        env:
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CF_API_TOKEN}" ]; then
+            echo "CF_API_TOKEN secret is not set"
+            exit 1
+          fi
+          case "$(printf '%s' "$VERSION" | tr '[:upper:]' '[:lower:]')" in
+            *alpha*) RELEASE_TYPE=alpha ;;
+            *beta*) RELEASE_TYPE=beta ;;
+            *) RELEASE_TYPE=release ;;
+          esac
+          awk -v ver="$VERSION" '
+            $0 ~ "^## " ver " " { show=1; next }
+            show && /^## / { exit }
+            show { print }
+          ' CHANGELOG.md > /tmp/notes.md
+          if [ ! -s /tmp/notes.md ]; then
+            printf 'Release %s\n' "$VERSION" > /tmp/notes.md
+          fi
+          stage="$(mktemp -d)"
+          mkdir -p "$stage/VoxPopuli"
+          tar -c \
+            --exclude .git \
+            --exclude .github \
+            --exclude scripts \
+            --exclude install.ps1 \
+            --exclude __pycache__ \
+            --exclude "*.pyc" \
+            . | tar -x -C "$stage/VoxPopuli"
+          (cd "$stage" && zip -r -q "/tmp/VoxPopuli-${VERSION}.zip" VoxPopuli)
+          VERSION="$VERSION" RELEASE_TYPE="$RELEASE_TYPE" python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          notes = Path("/tmp/notes.md").read_text(encoding="utf-8").strip()
+          meta = {
+              "changelog": notes,
+              "changelogType": "markdown",
+              "displayName": f"VoxPopuli {os.environ['VERSION']}",
+              "releaseType": os.environ["RELEASE_TYPE"],
+          }
+          Path("/tmp/metadata.json").write_text(json.dumps(meta), encoding="utf-8")
+          PY
+          curl --fail-with-body --silent --show-error \
+            --header "X-Api-Token: ${CF_API_TOKEN}" \
+            --form "metadata=</tmp/metadata.json;type=application/json" \
+            --form "file=@/tmp/VoxPopuli-${VERSION}.zip;type=application/zip" \
+            --output /tmp/curseforge-response.json \
+            "https://wow.curseforge.com/api/projects/1710130/upload-file"
+          echo "CurseForge file id: $(python3 -c 'import json; print(json.load(open("/tmp/curseforge-response.json"))["id"])')"
