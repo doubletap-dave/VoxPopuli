@@ -43,11 +43,11 @@ local function GuildCmd(rest)
             if k == key then NS.Print('"' .. name .. '" is already whitelisted.') return end
         end
         db.friendlyGuilds[key] = true
-        NS.scanQueries = nil  -- roster list changed: rebuild the scan rotation
+        NS.InvalidateScan()
         NS.Print(('Guild "' .. name .. '" added to whitelist (partial match).'))
     elseif sub == "remove" and name ~= "" then
         db.friendlyGuilds[name:lower()] = nil
-        NS.scanQueries = nil
+        NS.InvalidateScan()
         NS.Print(('Guild "' .. name .. '" removed from whitelist.'))
     elseif sub == "block" and name ~= "" then
         db.hostileGuilds[name:lower()] = true
@@ -81,6 +81,7 @@ local function PlayerCmd(rest)
     elseif sub == "remove" and key then
         db.allowedPlayers[key] = nil
         db.blockedPlayers[key] = nil
+        if db.haters then db.haters[key] = nil end
         NS.Print(name .. " removed from player overrides.")
     elseif sub == "list" then
         ListSet(db.allowedPlayers, "Always-allowed players")
@@ -102,11 +103,14 @@ local function CheckCmd(name)
     local status
     if key and db.allowedPlayers[key] then status = "ALLOWED (manual override)"
     elseif key and db.blockedPlayers[key] then status = "MUTED (manual override)"
-    elseif guild == nil then status = db.toggles.muteUnknown and "MUTED (unknown)" or "shown (unknown)"
-    elseif guild == false then status = "MUTED (guildless)"
-    elseif NS.IsHostileGuild(guild) then status = "MUTED (blocklisted guild: " .. guild .. ")"
+    elseif key and db.haters and db.haters[key] then status = "MUTED (flagged from chat)"
+    elseif guild == nil then
+        status = (db.toggles.hideEveryone and db.toggles.muteUnknown) and "MUTED (unknown)" or "SHOWN (unknown)"
+    elseif guild == false then
+        status = db.toggles.hideEveryone and "MUTED (no guild)" or "SHOWN (no guild)"
+    elseif NS.IsHostileGuild(guild) then status = "MUTED (anti or blocked guild: " .. guild .. ")"
     elseif NS.IsFriendlyGuild(guild) then status = "SHOWN (guild: " .. guild .. ")"
-    else status = "MUTED (guild: " .. guild .. ")" end
+    else status = db.toggles.hideEveryone and ("MUTED (guild: " .. guild .. ")") or ("SHOWN (guild: " .. guild .. ")") end
     NS.Print(name .. ": " .. status)
 end
 
@@ -147,17 +151,20 @@ local function Help()
         "on|off - enable/disable everything",
         "guild add|remove <name> | guild block|unblock <name> | guild list - whitelist (partial) / blocklist (exact)",
         "player allow|block|remove <name> | player list - per-player overrides",
-        "id <name> - identify a player's guild via /who",
-        "scan - scan next friendly guild roster via /who (level-banded rotation)",
+        "id <name> - put /who n-\"Name\" in chat; press Enter (SendWho is protected)",
+        "scan - queue the next friendly-roster /who; press Enter. Or click Scan /who",
         "check <name> - show why a player is shown or muted",
-        "unknowns on|off - mute players whose guild is unknown",
-        "autoscan on|off - auto-learn friendly rosters via /who after login",
+        "everyone on|off - hide everyone except allowed guilds and players",
+        "unknowns on|off - with everyone on, also hide players whose guild is unknown",
+        "sentiment on|off - flag players who insult an allowed guild",
+        "autoscan on|off - login reminder to /who friendly rosters",
         "bubbles on|off - hide muted players' chat bubbles",
         "groupwarn on|off - warn about non-whitelisted group members",
         "declines guild|group|duel|trade [on|off]",
         "channel <name> [on|off] - say,yell,emote,whisper,channel,guild,party,raid,instance",
-        "debug - toggle troubleshooting output",
+        "debug - show or hide the debug window",
         "stats - show hidden-message counts",
+        "lists - open the sortable saved-list window",
         "clear - reset all settings to defaults",
     }) do print("   " .. line) end
 end
@@ -183,11 +190,17 @@ SlashCmdList["VOXPOPULI"] = function(msg)
     elseif cmd == "scan" then NS.ScanNext()
     elseif cmd == "check" then CheckCmd(strtrim(rest))
     elseif cmd == "debug" then
-        db.toggles.debug = not db.toggles.debug
-        NS.Print("debug " .. (db.toggles.debug and "|cff33ff99ON|r" or "|cffff3333OFF|r"))
+        if NS.SetDebug then NS.SetDebug(not db.toggles.debug)
+        else db.toggles.debug = not db.toggles.debug end
+    elseif cmd == "everyone" then
+        if rest == "" then Toggle(db.toggles, "hideEveryone", "Hide everyone except allowed guilds and players")
+        else SetOnOff(db.toggles, "hideEveryone", "Hide everyone except allowed guilds and players", rest:lower()) end
     elseif cmd == "unknowns" then
         if rest == "" then Toggle(db.toggles, "muteUnknown", "Mute unknown players")
         else SetOnOff(db.toggles, "muteUnknown", "Mute unknown players", rest:lower()) end
+    elseif cmd == "sentiment" then
+        if rest == "" then Toggle(db.toggles, "sentiment", "Insult detection")
+        else SetOnOff(db.toggles, "sentiment", "Insult detection", rest:lower()) end
     elseif cmd == "autoscan" then
         if rest == "" then Toggle(db.toggles, "autoscan", "Auto-scan friendly rosters on login")
         else SetOnOff(db.toggles, "autoscan", "Auto-scan friendly rosters on login", rest:lower()) end
@@ -200,6 +213,8 @@ SlashCmdList["VOXPOPULI"] = function(msg)
         else SetOnOff(db.toggles, "groupWarn", "Group warnings", rest:lower()) end
     elseif cmd == "declines" then DeclineCmd(rest)
     elseif cmd == "channel" then ChannelCmd(rest)
+    elseif cmd == "lists" or cmd == "db" then
+        if NS.OpenLists then NS.OpenLists() else NS.Print("Lists window is not loaded.") end
     elseif cmd == "stats" then
         NS.Print(("Hidden this session: %d | all time: %d"):format(
             db.stats.hiddenSession, db.stats.hiddenTotal))

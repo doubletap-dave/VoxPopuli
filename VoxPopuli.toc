@@ -1,14 +1,16 @@
 ## Interface: 16001
 ## Title: VoxPopuli
-## Notes: Hides all player chat except from whitelisted guilds and players. The exact inverse of OlympusMute.
+## Notes: Shows player chat only from guilds and players you choose.
 ## Author: Sylvanas for Dave
-## Version: 1.0.0
+## Version: 1.1.0
 ## SavedVariables: VoxPopuliDB
 ## X-Category: Chat
 ## X-License: MIT
 
 Core.lua
+Debug.lua
 Detection.lua
 ChatFilter.lua
 Config.lua
+Lists.lua
 Options.lua

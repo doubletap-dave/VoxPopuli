@@ -1,0 +1,9 @@
+package-as: VoxPopuli
+enable-nolib-creation: no
+license-output: LICENSE
+manual-changelog: CHANGELOG.md
+
+ignore:
+  - .github
+  - scripts
+  - install.ps1

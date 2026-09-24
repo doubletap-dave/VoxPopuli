@@ -48,6 +48,11 @@ local function MessageFilter(chatFrame, event, msg, author, ...)
     local guid = select(10, ...)  -- arg12
     if NS.IsSecret(guid) then guid = nil end
 
+    if db.toggles.sentiment ~= false and type(msg) == "string" and type(author) == "string" then
+        local hostile, stem = NS.HostileAboutAllowed(msg)
+        if hostile then NS.NoteHater(author, guid, "insulted " .. tostring(stem)) end
+    end
+
     local ok, friendly = pcall(NS.IsFriendly, author, guid)
     -- Watch bubbles on every bubble-type message: muted ones get hidden, and
     -- friendly ones trigger a restore check (bubbles get reused).
@@ -329,22 +334,29 @@ frame:RegisterEvent("DUEL_REQUESTED")        -- arg1: challenger name
 frame:RegisterEvent("TRADE_SHOW")
 frame:RegisterEvent("GROUP_ROSTER_UPDATE")   -- invite resolved (joined/left): drop pending
 pcall(frame.RegisterEvent, frame, "TRADE_REQUEST")  -- not on every client
-frame:SetScript("OnEvent", function(self, event, arg1, ...)
+frame:SetScript("OnEvent", function(self, event, ...)
     local db = NS.db
     if not db or not db.toggles.enabled then return end
+    -- Lua 5.1 forbids '...' inside a nested non-vararg function, so capture
+    -- the payload here and forward it with unpack.
+    local argc = select("#", ...)
+    local argv = { ... }
+    local function run(fn)
+        xpcall(function() return fn(unpack(argv, 1, argc)) end, NS.ReportError)
+    end
     if event == "PARTY_INVITE_REQUEST" then
-        xpcall(function() HandlePartyInvite(arg1, ...) end, NS.ReportError)
+        run(HandlePartyInvite)
     elseif event == "PARTY_INVITE_CANCEL" then
         NS.pendingInvite = nil
         NS.pendingInviteKind = nil
     elseif event == "GUILD_INVITE_REQUEST" then
-        xpcall(function() HandleGuildInvite(arg1, ...) end, NS.ReportError)
+        run(HandleGuildInvite)
     elseif event == "DUEL_REQUESTED" then
-        xpcall(function() HandleDuel(arg1) end, NS.ReportError)
+        run(HandleDuel)
     elseif event == "TRADE_SHOW" then
         xpcall(function() HandleTrade(nil) end, NS.ReportError)
     elseif event == "TRADE_REQUEST" then
-        xpcall(function() HandleTrade(arg1) end, NS.ReportError)
+        run(HandleTrade)
     elseif event == "GROUP_ROSTER_UPDATE" then
         NS.pendingInvite = nil
         NS.pendingInviteKind = nil

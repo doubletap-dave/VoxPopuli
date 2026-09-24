@@ -1,0 +1,73 @@
+# Bump the addon version, tag that commit, and publish a GitHub Release.
+# CurseForge packages the tag when this repository's webhook is set.
+#
+# One-time CurseForge setup (do this in the browser, not in the repo):
+#   1. Create an API token at https://www.curseforge.com/account/api-tokens
+#   2. On the GitHub repo: Settings > Webhooks > Add webhook
+#   3. Payload URL:
+#        https://www.curseforge.com/api/projects/{projectID}/package?token={token}
+#      projectID is on the project's Overview page, under About This Project.
+#   4. Content type: application/json. Leave the other settings at their defaults.
+# A tag with no "alpha" or "beta" in the name is a Release. "1.2.0-beta" is a beta.
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Which part of the version to increment
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+        default: patch
+      notes:
+        description: Changelog text for this version
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Bump version and changelog
+        id: bump
+        env:
+          NOTES: ${{ inputs.notes }}
+        run: |
+          python scripts/bump_version.py --bump "${{ inputs.bump }}" --notes "$NOTES"
+          version=$(sed -n 's/^## Version: *//p' VoxPopuli.toc | head -n 1)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Commit, tag, and push
+        env:
+          VERSION: ${{ steps.bump.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add VoxPopuli.toc CHANGELOG.md
+          git commit -m "Release $VERSION"
+          git tag -a "$VERSION" -m "VoxPopuli $VERSION"
+          git push origin HEAD
+          git push origin "$VERSION"
+
+      - name: GitHub Release
+        env:
+          VERSION: ${{ steps.bump.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          awk -v ver="$VERSION" '
+            $0 ~ "^## " ver " " { show=1; next }
+            show && /^## / { exit }
+            show { print }
+          ' CHANGELOG.md > /tmp/notes.md
+          gh release create "$VERSION" --title "VoxPopuli $VERSION" --notes-file /tmp/notes.md

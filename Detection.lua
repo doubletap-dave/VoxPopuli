@@ -79,22 +79,41 @@ function NS.NoteLevel(level)
     end
 end
 
--- Shift-clicking a name (or our own /who) can fire the same search several
--- times in a row. Let identical searches through once; drop repeats < 3s.
+-- Forever (and classic) treat SendWho() as a protected function: addon code
+-- that calls it is blocked unless the call comes from a hardware event.
+-- Slash commands and timers are not hardware events, so we never call it.
+-- The options button is a secure macro button ("/who ..."). /vox scan and
+-- /vox id put the same line in the chat box for the player to press Enter.
 local lastWhoFilter, lastWhoTime = nil, 0
-function NS.SendWho(filter)
+
+function NS.PromptWho(filter)
+    if not filter or filter == "" then return end
     local now = GetTime()
     if filter == lastWhoFilter and now - lastWhoTime < 3 then
         NS.Debug("skipped repeat /who " .. tostring(filter))
-        return
+        return false
     end
     lastWhoFilter, lastWhoTime = filter, now
-    NS.Debug("/who " .. tostring(filter))
-    if C_FriendList and C_FriendList.SendWho then
-        C_FriendList.SendWho(filter)
-    elseif type(SendWho) == "function" then
-        SendWho(filter)
+    NS.pendingWho = filter
+    local text = "/who " .. filter
+    NS.Debug(text)
+    if ChatFrame_OpenChat then
+        ChatFrame_OpenChat(text)
+    else
+        local editBox = (DEFAULT_CHAT_FRAME and DEFAULT_CHAT_FRAME.editBox) or ChatFrame1EditBox
+        if editBox then
+            editBox:Show()
+            editBox:SetText(text)
+            editBox:SetFocus()
+        end
     end
+    NS.Print("Press Enter to run: " .. text)
+    return true
+end
+
+-- Retained for callers. Does not touch the protected SendWho API.
+function NS.SendWho(filter)
+    NS.PromptWho(filter)
 end
 
 local function FriendlyGuildList()
@@ -132,39 +151,67 @@ function NS.GetScanProgress()
     return NS.scanStep, #(NS.scanQueries or {})
 end
 
--- Manual scan (slash command): one step of the banded rotation per use.
-function NS.ScanNext()
+-- Next query in the rotation without advancing. idx is 1-based.
+function NS.PeekScanQuery()
     NS.scanQueries = NS.scanQueries or BuildScanQueries()
-    if #NS.scanQueries == 0 then
-        NS.Print("Nothing to scan: no friendly guilds.")
-        return
+    local total = #NS.scanQueries
+    if total == 0 then return nil, 0, 0 end
+    local idx = (NS.scanStep % total) + 1
+    return NS.scanQueries[idx], idx, total
+end
+
+-- Point the secure Scan button at whatever /who should run on the next click.
+function NS.ArmScanButton()
+    local query, idx = NS.PeekScanQuery()
+    NS._armedQuery = query
+    NS._armedIndex = idx
+    local btn = NS.scanButton
+    if btn and btn.SetAttribute and not (InCombatLockdown and InCombatLockdown()) then
+        btn:SetAttribute("type", "macro")
+        btn:SetAttribute("macrotext", query and ("/who " .. query) or "")
     end
-    NS.scanStep = NS.scanStep % #NS.scanQueries + 1
-    local query = NS.scanQueries[NS.scanStep]
-    NS.pendingWho = query
-    NS.autoScanning = false
-    NS.SendWho(query)
-    NS.Print(("scan %d/%d: /who %s"):format(NS.scanStep, #NS.scanQueries, query))
     if NS.UpdateScanButton then NS.UpdateScanButton() end
 end
 
--- Automatic chain: walks every friendly guild's base roster once, spaced out
--- to respect the /who throttle. Kicks off on login (see Core.OnLogin).
--- (Base queries only — the deep banded rotation is for manual /vox scan.)
-function NS.AutoScanChain()
-    local db = NS.db
-    if not db.toggles.autoscan then return end
-    if #NS.scanQueue == 0 then
-        for _, gname in ipairs(FriendlyGuildList()) do
-            NS.scanQueue[#NS.scanQueue + 1] = 'g-"' .. gname .. '"'
-        end
+function NS.InvalidateScan()
+    NS.scanQueries = nil
+    if NS.db then NS.ArmScanButton() end
+end
+
+-- Secure button PostClick: the macro already ran as a hardware event.
+function NS.OnScanClicked()
+    local query = NS._armedQuery
+    if not query then
+        NS.Print("Nothing to scan: no friendly guilds.")
+        return
     end
-    local query = table.remove(NS.scanQueue, 1)
-    if not query then return end
+    NS.scanStep = NS._armedIndex or NS.scanStep
     NS.pendingWho = query
-    NS.autoScanning = true
-    NS.SendWho(query)
-    NS.Debug("auto-scan: " .. query)
+    NS.autoScanning = false
+    lastWhoFilter, lastWhoTime = query, GetTime()
+    NS.Print(("scan %d/%d: /who %s"):format(NS.scanStep, #(NS.scanQueries or {}), query))
+    NS.ArmScanButton()
+end
+
+-- /vox scan: cannot call SendWho from a slash handler. Stage the line so
+-- pressing Enter runs it, and arm the button at the following query.
+function NS.ScanNext()
+    local query, idx = NS.PeekScanQuery()
+    if not query then
+        NS.Print("Nothing to scan: no friendly guilds.")
+        return
+    end
+    if not NS.PromptWho(query) then return end
+    NS.scanStep = idx
+    NS.autoScanning = false
+    NS.ArmScanButton()
+end
+
+-- Login used to fire SendWho on a timer. That call is blocked on this client,
+-- so autoscan only arms the Scan button and says so once.
+function NS.AutoScanChain()
+    if not NS.db or not NS.db.toggles.autoscan then return end
+    NS.ArmScanButton()
 end
 
 -- Identify one player by name.
@@ -173,9 +220,8 @@ function NS.Identify(name)
         NS.Print("Usage: /vox id <PlayerName>")
         return
     end
-    NS.pendingWho = "id:" .. name
     NS.autoScanning = false
-    NS.SendWho('n-"' .. name .. '"')
+    NS.PromptWho('n-"' .. name .. '"')
 end
 
 local function HandleWhoResults()
@@ -204,15 +250,14 @@ local function HandleWhoResults()
             end
         end
     end
+    NS.Debug(("who results: %d shown, %d changed"):format(n, learned))
+    if NS.RefreshPanel then NS.RefreshPanel() end
     if NS.pendingWho then
         NS.Print(("Who results: %d player(s), %d (re)identified."):format(n, learned))
-        -- Continue the automatic login chain, spaced for the /who throttle.
         local chained = NS.autoScanning
         NS.pendingWho = nil
         NS.autoScanning = false
-        if chained and #NS.scanQueue > 0 and NS.db.toggles.autoscan then
-            C_Timer.After(8, NS.AutoScanChain)
-        end
+        if chained then NS.ArmScanButton() end
     end
 end
 
