@@ -398,6 +398,8 @@ function NS.IsFriendly(author, guid)
     end
 
     if db.allowedPlayers[key] then return true end
+    -- Shown only until the current party or raid ends. Not written to SavedVariables.
+    if NS.sessionAllows and NS.sessionAllows[key] then return true end
     if db.blockedPlayers[key] then return false end
     if db.haters and db.haters[key] then return false end
 
@@ -413,6 +415,23 @@ function NS.IsFriendly(author, guid)
     end
     if guild == false or guild == "" then return false end
     return NS.IsFriendlyGuild(guild)
+end
+
+-- Why this player is on a real block list, ignoring the temporary group exception.
+-- Nil for people who are merely outside the allow list.
+NS.sessionAllows = {}
+NS.sessionAsked = {}
+
+function NS.BlacklistReason(key)
+    local db = NS.db
+    if not db or not key or db.allowedPlayers[key] then return nil end
+    if db.blockedPlayers[key] then return "always hidden" end
+    if db.haters and db.haters[key] then return "flagged from chat" end
+    local guild = db.known[key]
+    if type(guild) == "string" and guild ~= "" and NS.IsHostileGuild(guild) then
+        return "anti-guild " .. guild
+    end
+    return nil
 end
 
 function NS.BumpHidden()

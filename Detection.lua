@@ -296,11 +296,166 @@ end
 -- ---------------------------------------------------------------------------
 
 local warned = {}
+local pending = {}
+local groupFrame, groupScroll, groupChild, groupRows, groupEmpty
+
+local function LayoutGroupList()
+    if not groupFrame then return end
+    local n = #pending
+    local listH = math.min(math.max(n, 1) * 22, 176)
+    groupScroll:SetHeight(listH)
+    groupChild:SetWidth(groupScroll:GetWidth() or 360)
+    groupChild:SetHeight(math.max(n * 22, 1))
+    for i, item in ipairs(pending) do
+        local row = groupRows[i]
+        if not row then
+            row = CreateFrame("Frame", nil, groupChild)
+            row:SetHeight(22)
+            row:SetPoint("TOPLEFT", 0, -((i - 1) * 22))
+            row:SetPoint("RIGHT", groupChild, "RIGHT", 0, 0)
+            row.bg = row:CreateTexture(nil, "BACKGROUND")
+            if row.bg.SetColorTexture then
+                row.bg:SetColorTexture(1, 1, 1, 1)
+            else
+                row.bg:SetTexture("Interface\\ChatFrame\\ChatFrameBackground")
+            end
+            row.bg:SetAllPoints()
+            row.name = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+            row.name:SetPoint("LEFT", 8, 0)
+            row.name:SetWidth(180)
+            row.name:SetJustifyH("LEFT")
+            row.name:SetWordWrap(false)
+            row.reason = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+            row.reason:SetPoint("LEFT", row.name, "RIGHT", 8, 0)
+            row.reason:SetPoint("RIGHT", -8, 0)
+            row.reason:SetJustifyH("LEFT")
+            row.reason:SetWordWrap(false)
+            groupRows[i] = row
+        end
+        row.bg:SetVertexColor(1, 1, 1, i % 2 == 0 and 0.06 or 0.12)
+        row.name:SetText(item.name)
+        row.reason:SetText(item.reason)
+        row:Show()
+    end
+    for i = n + 1, #groupRows do groupRows[i]:Hide() end
+    groupEmpty:SetShown(n == 0)
+    local showBtn = groupFrame.showBtn
+    local keepBtn = groupFrame.keepBtn
+    showBtn:ClearAllPoints()
+    keepBtn:ClearAllPoints()
+    showBtn:SetPoint("TOPLEFT", groupScroll, "BOTTOMLEFT", 0, -12)
+    keepBtn:SetPoint("LEFT", showBtn, "RIGHT", 8, 0)
+    groupFrame:SetHeight(156 + listH)
+end
+
+local function EnsureGroupFrame()
+    if groupFrame then return end
+    groupRows = {}
+    groupFrame = CreateFrame("Frame", "VoxPopuliGroupPrompt", UIParent)
+    groupFrame:SetSize(440, 220)
+    groupFrame:SetPoint("CENTER", 0, 80)
+    groupFrame:SetFrameStrata("DIALOG")
+    groupFrame:SetClampedToScreen(true)
+    groupFrame:EnableMouse(true)
+    groupFrame:SetMovable(true)
+    groupFrame:RegisterForDrag("LeftButton")
+    groupFrame:SetScript("OnDragStart", groupFrame.StartMoving)
+    groupFrame:SetScript("OnDragStop", groupFrame.StopMovingOrSizing)
+    groupFrame:Hide()
+    if NS.PaintFrame then NS.PaintFrame(groupFrame, 0.75, 0.45, 0.25) end
+
+    local title = groupFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    title:SetPoint("TOPLEFT", 16, -14)
+    title:SetText("Hidden players in your group")
+
+    local sub = groupFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    sub:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -6)
+    sub:SetPoint("RIGHT", -16, 0)
+    sub:SetJustifyH("LEFT")
+    sub:SetText("Show their chat until this group ends, or leave them hidden. The saved block is not changed.")
+
+    local nameHead = groupFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    nameHead:SetPoint("TOPLEFT", sub, "BOTTOMLEFT", 8, -10)
+    nameHead:SetText("Player")
+    local whyHead = groupFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    whyHead:SetPoint("LEFT", nameHead, "LEFT", 188, 0)
+    whyHead:SetText("Reason")
+
+    groupScroll = CreateFrame("ScrollFrame", nil, groupFrame, "UIPanelScrollFrameTemplate")
+    groupScroll:SetPoint("TOPLEFT", nameHead, "BOTTOMLEFT", -8, -4)
+    groupScroll:SetPoint("RIGHT", -28, 0)
+    groupScroll:SetHeight(44)
+    groupChild = CreateFrame("Frame", nil, groupScroll)
+    groupChild:SetSize(380, 22)
+    groupScroll:SetScrollChild(groupChild)
+    groupScroll:EnableMouseWheel(true)
+    groupScroll:SetScript("OnMouseWheel", function(self, delta)
+        local range = self:GetVerticalScrollRange() or 0
+        local nextScroll = self:GetVerticalScroll() - delta * 22
+        if nextScroll < 0 then nextScroll = 0 end
+        if nextScroll > range then nextScroll = range end
+        self:SetVerticalScroll(nextScroll)
+    end)
+
+    groupEmpty = groupScroll:CreateFontString(nil, "OVERLAY", "GameFontDisable")
+    groupEmpty:SetPoint("TOPLEFT", 8, -4)
+    groupEmpty:SetText("Nobody left on this list.")
+
+    local function ClosePrompt()
+        table.wipe(pending)
+        groupFrame:Hide()
+    end
+    local showBtn = CreateFrame("Button", nil, groupFrame, "UIPanelButtonTemplate")
+    showBtn:SetSize(180, 24)
+    showBtn:SetText("Show for this group")
+    showBtn:SetScript("OnClick", function()
+        local names = {}
+        for _, item in ipairs(pending) do
+            NS.sessionAllows[item.key] = true
+            names[#names + 1] = item.name
+        end
+        if #names > 0 then
+            NS.Print("Showing " .. table.concat(names, ", ") .. " until this group ends.")
+        end
+        ClosePrompt()
+    end)
+    local keepBtn = CreateFrame("Button", nil, groupFrame, "UIPanelButtonTemplate")
+    keepBtn:SetSize(140, 24)
+    keepBtn:SetText("Keep hidden")
+    keepBtn:SetScript("OnClick", function()
+        local n = #pending
+        ClosePrompt()
+        if n > 0 then
+            NS.Print(n == 1 and "Keeping 1 player hidden." or ("Keeping " .. n .. " players hidden."))
+        end
+    end)
+    groupFrame.showBtn = showBtn
+    groupFrame.keepBtn = keepBtn
+    groupFrame:SetScript("OnShow", LayoutGroupList)
+end
+
+local function AskGroupUnblock(key, name, reason)
+    if NS.sessionAsked[key] or NS.sessionAllows[key] then return end
+    NS.sessionAsked[key] = true
+    pending[#pending + 1] = { key = key, name = name, reason = reason }
+    EnsureGroupFrame()
+    LayoutGroupList()
+    groupFrame:Show()
+end
 
 local function CheckGroup()
     local db = NS.db
     if not IsInGroup() then
+        local restored = 0
+        for _ in pairs(NS.sessionAllows) do restored = restored + 1 end
+        table.wipe(NS.sessionAllows)
+        table.wipe(NS.sessionAsked)
+        table.wipe(pending)
+        if groupFrame then groupFrame:Hide() end
         table.wipe(warned)
+        if restored > 0 then
+            NS.Print("Group ended. " .. restored .. " player(s) are hidden again.")
+        end
         return
     end
     local prefix = IsInRaid() and "raid" or "party"
@@ -314,9 +469,12 @@ local function CheckGroup()
             if UnitFullName then n, realm = UnitFullName(unit) else n = UnitName(unit) end
             if n and not NS.IsSecret(n) then
                 local key = NS.NormalizeName((realm and realm ~= "") and (n .. "-" .. realm) or n)
-                if key and not warned[key] then
-                    warned[key] = true
-                    if db.toggles.groupWarn and not NS.IsFriendly(key) then
+                if key then
+                    local reason = db.toggles.enabled and NS.BlacklistReason(key) or nil
+                    if reason then
+                        AskGroupUnblock(key, n, reason)
+                    elseif not warned[key] and db.toggles.groupWarn and not NS.IsFriendly(key) then
+                        warned[key] = true
                         local guild = db.known[key]
                         found[#found + 1] = ("%s%s"):format(n,
                             (guild and guild ~= false) and (" <" .. guild .. ">") or "")
