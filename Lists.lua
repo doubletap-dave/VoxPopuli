@@ -51,6 +51,7 @@ end
 
 local function PlayerStatus(db, key, guild)
     if db.allowedPlayers[key] then return "Always shown" end
+    if NS.IsOffensiveName and NS.IsOffensiveName(key) then return "Offensive name" end
     if db.blockedPlayers[key] then return "Always hidden" end
     if db.haters and db.haters[key] then return "Flagged from chat" end
     if not guild or guild == "" then return "No guild" end

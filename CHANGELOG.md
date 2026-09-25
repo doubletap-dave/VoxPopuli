@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.0 - 2026-09-25
+
+### Added
+- One window lists every hidden player in your party or raid. Show their chat until the group ends, or leave them hidden. The saved block returns when the group ends.
+- Character names that mash Charlie Kirk or Erika Kirk together with an insult are hidden. Plain Charlie, Erika, Kirk, and Kirkland names are not.
+
 ## 1.1.0 - 2026-09-24
 
 ### Added

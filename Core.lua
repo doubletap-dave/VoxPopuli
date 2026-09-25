@@ -184,6 +184,32 @@ local function Compact(s)
     return (s:gsub("%s+", ""))
 end
 
+-- Character names that mash Charlie Kirk or Erika Kirk together with an insult.
+-- A plain "Charlie", "Erika", "Kirk", or "Kirkland" is left alone.
+local NAME_INSULTS = {
+    "neckhole", "asshole", "butthole", "whore", "slut", "cunt",
+    "faggot", "nigger", "retard", "nazi", "rape", "neck",
+}
+
+function NS.IsOffensiveName(name)
+    if type(name) ~= "string" or name == "" or NS.IsSecret(name) then return false end
+    local base = name:match("^[^%-]+") or name
+    local compact = Compact(NS.Fold(base))
+    if compact == "" then return false end
+    if not (compact:find("charlie", 1, true) or compact:find("erika", 1, true) or compact:find("kirk", 1, true)) then
+        return false
+    end
+    local stripped = compact
+    for _, stem in ipairs({ "kirkland", "charlie", "erika", "kirks", "kirk" }) do
+        stripped = stripped:gsub(stem, "")
+    end
+    if stripped == "" then return false end
+    for _, insult in ipairs(NAME_INSULTS) do
+        if stripped:find(insult, 1, true) then return true end
+    end
+    return false
+end
+
 local function Within(a, b, maxD)
     local n, m = #a, #b
     if math.abs(n - m) > maxD then return false end
@@ -400,6 +426,7 @@ function NS.IsFriendly(author, guid)
     if db.allowedPlayers[key] then return true end
     -- Shown only until the current party or raid ends. Not written to SavedVariables.
     if NS.sessionAllows and NS.sessionAllows[key] then return true end
+    if NS.IsOffensiveName(key) then return false end
     if db.blockedPlayers[key] then return false end
     if db.haters and db.haters[key] then return false end
 
@@ -425,6 +452,7 @@ NS.sessionAsked = {}
 function NS.BlacklistReason(key)
     local db = NS.db
     if not db or not key or db.allowedPlayers[key] then return nil end
+    if NS.IsOffensiveName(key) then return "offensive name" end
     if db.blockedPlayers[key] then return "always hidden" end
     if db.haters and db.haters[key] then return "flagged from chat" end
     local guild = db.known[key]
